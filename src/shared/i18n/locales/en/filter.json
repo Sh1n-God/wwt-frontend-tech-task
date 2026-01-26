@@ -1,1 +1,6 @@
-{}
+{
+    "filterstitle": "Filter Options",
+    "apply": "Apply Filters",
+    "cancel": "Cancel",
+    "openFilter": "Open Filter"
+}
