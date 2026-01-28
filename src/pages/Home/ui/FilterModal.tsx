@@ -1,5 +1,11 @@
 // FilterModal.tsx
-import { useEffect, useState } from 'react'
+import {
+	type KeyboardEvent as ReactKeyboardEvent,
+	useEffect,
+	useMemo,
+	useRef,
+	useState
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { useFilterStore } from '@shared/api/types/Filter/FilterStore'
@@ -19,11 +25,12 @@ export const FilterModal = ({ isOpen, onClose, filters }: Props) => {
 	const { t } = useTranslation()
 	const savedFilters = useFilterStore(state => state.filters)
 	const setFilters = useFilterStore(state => state.setFilters)
-	const clearFiltersStore = useFilterStore(state => state.clearFilters)
 
 	const [localFilters, setLocalFilters] = useState(savedFilters)
 	const [confirmOpen, setConfirmOpen] = useState(false)
 	const [snapshotFilters, setSnapshotFilters] = useState(savedFilters)
+	const modalRef = useRef<HTMLDivElement | null>(null)
+	const lastActiveRef = useRef<HTMLElement | null>(null)
 
 	useEffect(() => {
 		if (isOpen) {
@@ -69,8 +76,95 @@ export const FilterModal = ({ isOpen, onClose, filters }: Props) => {
 	}
 
 	const handleClear = () => {
-		clearFiltersStore()
 		setLocalFilters([])
+	}
+
+	const selectedByFilter = useMemo(() => {
+		const map = new Map<string, Set<string>>()
+		localFilters.forEach(filterItem => {
+			map.set(filterItem.id, new Set(filterItem.optionsIds))
+		})
+		return map
+	}, [localFilters])
+
+	useEffect(() => {
+		if (!isOpen || confirmOpen) {
+			return
+		}
+
+		lastActiveRef.current = document.activeElement as HTMLElement | null
+
+		const modal = modalRef.current
+		if (modal) {
+			modal.focus()
+		}
+
+		const handleKeyDown = (event: KeyboardEvent) => {
+			if (event.key === 'Escape') {
+				event.stopPropagation()
+				onClose()
+			}
+		}
+
+		document.addEventListener('keydown', handleKeyDown)
+
+		return () => {
+			document.removeEventListener('keydown', handleKeyDown)
+		}
+	}, [confirmOpen, isOpen, onClose])
+
+	useEffect(() => {
+		if (isOpen) {
+			return
+		}
+
+		lastActiveRef.current?.focus()
+	}, [isOpen])
+
+	const handleTrapFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+		if (confirmOpen) {
+			return
+		}
+		if (event.key !== 'Tab') {
+			return
+		}
+
+		const modal = modalRef.current
+		if (!modal) {
+			return
+		}
+
+		const focusables = Array.from(
+			modal.querySelectorAll<HTMLElement>(
+				'button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])'
+			)
+		).filter(
+			el =>
+				!el.hasAttribute('disabled') &&
+				el.getAttribute('aria-hidden') !== 'true'
+		)
+
+		if (focusables.length === 0) {
+			event.preventDefault()
+			return
+		}
+
+		const first = focusables[0]
+		const last = focusables[focusables.length - 1]
+		const active = document.activeElement as HTMLElement | null
+
+		if (event.shiftKey) {
+			if (active === first || !active || !modal.contains(active)) {
+				event.preventDefault()
+				last.focus()
+			}
+			return
+		}
+
+		if (active === last || !active || !modal.contains(active)) {
+			event.preventDefault()
+			first.focus()
+		}
 	}
 
 	if (!isOpen) {
@@ -81,14 +175,29 @@ export const FilterModal = ({ isOpen, onClose, filters }: Props) => {
 		<>
 			<div className="fixed inset-0 z-50 flex items-center justify-center p-[80px]">
 				<div
-					className="absolute inset-0 bg-black/50"
+					className={`absolute inset-0 bg-black/50 ${confirmOpen ? 'pointer-events-none' : ''}`}
 					onClick={onClose}
 				/>
-				<div className="flex max-h-[80vh] relative z-10 w-full overflow-auto rounded-[16px] bg-white px-8 py-[40px] items-center flex-col">
+				<div
+					ref={modalRef}
+					role="dialog"
+					aria-modal="true"
+					aria-labelledby="filter-modal-title"
+					aria-hidden={confirmOpen}
+					tabIndex={-1}
+					onKeyDown={handleTrapFocus}
+					className={`flex max-h-[80vh] relative z-10 w-full overflow-auto rounded-[16px] bg-white px-8 py-[40px] items-center flex-col ${confirmOpen ? 'pointer-events-none' : ''}`}
+				>
 					<div className="mb-[25px] w-full relative">
-						<h2 className="text-[40px] font-medium">{t('Filter')}</h2>
+						<h2
+							id="filter-modal-title"
+							className="text-[40px] font-medium"
+						>
+							{t('Filter')}
+						</h2>
 						<button
 							type="button"
+							aria-label={t('Close', { defaultValue: 'Close' })}
 							className="absolute top-[0px] right-[0px] rounded-full hover:bg-gray-200 transition"
 							onClick={onClose}
 						>
@@ -111,9 +220,7 @@ export const FilterModal = ({ isOpen, onClose, filters }: Props) => {
 										<input
 											type="checkbox"
 											checked={Boolean(
-												localFilters
-													.find(filterItem => filterItem.id === filter.id)
-													?.optionsIds?.includes(option.id)
+												selectedByFilter.get(filter.id)?.has(option.id)
 											)}
 											onChange={() => handleToggle(filter.id, option.id)}
 										/>
@@ -144,7 +251,9 @@ export const FilterModal = ({ isOpen, onClose, filters }: Props) => {
 
 			<ConfirmModal
 				isOpen={confirmOpen}
-				title="Do you want to apply new filters"
+				title={t('Do you want to apply new filters', {
+					defaultValue: 'Do you want to apply new filters'
+				})}
 				onConfirm={handleConfirm}
 				onReset={handleReset}
 				onClose={() => setConfirmOpen(false)}
